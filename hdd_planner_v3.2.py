@@ -114,7 +114,9 @@ class HddPlanner:
 
         # % уклона → градусы
         start_deg    = math.degrees(math.atan(start_angle_pct / 100.0))
-        max_bend_deg = max_bend_pct   # упрощение: % ≈ °/штангу
+        # Упрощение: max_bend_pct (%) трактуется как градусы/штангу.
+        # Модель даёт хорошую точность при max_bend ≤ 10°/3м (типичный диапазон ГНБ).
+        max_bend_deg = max_bend_pct
 
         x, depth, angle = 0.0, 0.0, start_deg
         rod = 0
@@ -191,7 +193,7 @@ class HddPlanner:
         print("  ├─────┼──────────┼──────────┼──────────┤")
 
         step = max(1, len(pts) // 20)
-        shown: set = set()
+        shown: set[int] = set()
         for p in pts[::step]:
             print(f"  │ {p.rod_number:>3} │ {p.x:>8.2f} │ {p.depth:>8.2f} │ {p.angle:>8.2f} │")
             shown.add(p.rod_number)
@@ -384,7 +386,7 @@ class ModeSpecificSearcher:
                     "max_bend",
                     f"{self.max_bend}%",
                     f"{mb}%",
-                    f"Увеличить max_bend с {self.max_bend}% на {mb}%?",
+                    f"Увеличить max_bend с {self.max_bend}% до {mb}%?",
                 )
                 if approved:
                     return result
@@ -629,7 +631,12 @@ def _read_common_params():
     Lxx         = _input_float("  Lxx (м, > 0): ",          lo=1.0)
     depth       = _input_float("  Глубина (м, > 0): ",       lo=0.1)
     start_angle = _input_float("  Угол входа (%, 1-90): ",   lo=1.0, hi=90.0)
-    max_bend    = _input_float("  Макс. изгиб (%, 0.5-10): ", lo=0.5, hi=10.0)
+    max_bend    = _input_float(
+        f"  Макс. изгиб (%, {ModeSpecificSearcher.BEND_STEP}-"
+        f"{ModeSpecificSearcher.MAX_BEND_LIMIT}): ",
+        lo=ModeSpecificSearcher.BEND_STEP,
+        hi=ModeSpecificSearcher.MAX_BEND_LIMIT,
+    )
     return Lxx, depth, start_angle, max_bend
 
 
