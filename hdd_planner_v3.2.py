@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HDD Trajectory Planner  v3.2
+HDD Trajectory Planner  v3.1
 Горизонтальное направленное бурение — Планировщик траектории
 
 Реализует каскадную систему поиска параметров для трёх режимов бурения:
@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
 
-VERSION = "3.2"
+VERSION = "3.1"
 
 # ══════════════════════════════════════════════════════════════
 #  ENUMS & DATACLASSES
@@ -222,7 +222,7 @@ class HddPlanner:
 #  MODE-SPECIFIC SEARCHER  (cascade logic)
 # ══════════════════════════════════════════════════════════════
 
-class ModeSpecificSearcher:
+class CascadeSearcher:
     """
     Реализует каскадную логику поиска параметров для трёх режимов.
 
@@ -292,10 +292,10 @@ class ModeSpecificSearcher:
                 return False
 
             if answer in ("да", "yes", "y", "д", "1"):
-                print("  🎉 РЕШЕНИЕ ПРИНЯТО!\n")
+                print("  ✅ РЕШЕНИЕ ПРИНЯТО!\n")
                 return True
             if answer in ("нет", "no", "n", "н", "0"):
-                print("  ⚠️  Перехожу на следующий уровень...\n")
+                print("  ⏳ Понял. Переходим на следующий уровень...\n")
                 return False
             print("  Введите «да» или «нет».")
 
@@ -344,6 +344,143 @@ class ModeSpecificSearcher:
             result.append(round(v, 1))
             v += self.BEND_STEP
         return result
+
+    # ── LEVEL METHODS (используются из main()) ───────────────
+
+    def search_level_lxx(self) -> Optional[TrajectoryResult]:
+        """
+        УРОВЕНЬ 1 для NO_ANCHOR: перебор Lxx.
+        Возвращает принятый результат или None (не найдено / отклонено пользователем).
+        """
+        lxx_values = self._lxx_range()
+        total = len(lxx_values)
+
+        for idx, lx in enumerate(lxx_values):
+            sys.stdout.write(
+                f"\r{self._progress_bar(idx + 1, total)} | Lxx: {lx:.0f}м  "
+            )
+            sys.stdout.flush()
+
+            result = self.planner.calculate_trajectory(
+                lx, self.target_depth, self.start_angle, self.max_bend
+            )
+
+            if result.is_valid:
+                print(f"\n\n✅ НАЙДЕНО РЕШЕНИЕ при Lxx = {lx:.0f}м")
+                self.planner.display_trajectory_table(result)
+
+                approved = self._ask_user_approval(
+                    "Lxx",
+                    f"{self.Lxx:.0f}м",
+                    f"{lx:.0f}м",
+                    f"Смещение на {lx:.0f}м возможно?",
+                )
+                if approved:
+                    return result
+                # НЕТ → возвращаем None, main() перейдёт на УРОВЕНЬ 2
+                return None
+
+        # Не найдено ни одного валидного
+        return None
+
+    def search_level_start_angle(self) -> Optional[TrajectoryResult]:
+        """
+        УРОВЕНЬ 2 для NO_ANCHOR: перебор start_angle.
+        Возвращает принятый результат или None (не найдено / отклонено пользователем).
+        """
+        angle_values = self._angle_range(self.start_angle)
+        total = len(angle_values)
+
+        for idx, sa in enumerate(angle_values):
+            sys.stdout.write(
+                f"\r{self._progress_bar(idx + 1, total)} | start_angle: {sa}%  "
+            )
+            sys.stdout.flush()
+
+            result = self.planner.calculate_trajectory(
+                self.Lxx, self.target_depth, sa, self.max_bend
+            )
+
+            if result.is_valid:
+                print(f"\n\n✅ НАЙДЕНО РЕШЕНИЕ при start_angle = {sa}%")
+                self.planner.display_trajectory_table(result)
+
+                approved = self._ask_user_approval(
+                    "start_angle",
+                    f"{self.start_angle}%",
+                    f"{sa}%",
+                    f"Возможно изменить угол входа с {self.start_angle}% на {sa}%?",
+                )
+                if approved:
+                    return result
+                # НЕТ → возвращаем None, main() перейдёт на следующий уровень
+                return None
+
+        # Не найдено ни одного валидного
+        print("\n⚠️  Изменение start_angle не помогло.\n")
+        return None
+
+    def search_level_max_bend(self) -> Optional[TrajectoryResult]:
+        """
+        Финальный уровень: перебор max_bend.
+        Не задаёт вопрос пользователю — просто возвращает первое валидное решение.
+        """
+        bend_values = self._bend_range(self.max_bend)
+        total = len(bend_values)
+
+        for idx, mb in enumerate(bend_values):
+            sys.stdout.write(
+                f"\r{self._progress_bar(idx + 1, total)} | max_bend: {mb}%  "
+            )
+            sys.stdout.flush()
+
+            result = self.planner.calculate_trajectory(
+                self.Lxx, self.target_depth, self.start_angle, mb
+            )
+
+            if result.is_valid:
+                print(f"\n\n✅ НАЙДЕНО РЕШЕНИЕ при max_bend = {mb}%")
+                self.planner.display_trajectory_table(result)
+                return result
+
+        return None
+
+    def search_level_start_angle_anchored(self) -> Optional[TrajectoryResult]:
+        """
+        УРОВЕНЬ 1 для ANCHORED: перебор start_angle.
+        Возвращает принятый результат или None (не найдено / отклонено пользователем).
+        """
+        angle_values = self._angle_range(self.start_angle)
+        total = len(angle_values)
+
+        for idx, sa in enumerate(angle_values):
+            sys.stdout.write(
+                f"\r{self._progress_bar(idx + 1, total)} | start_angle: {sa}%  "
+            )
+            sys.stdout.flush()
+
+            result = self.planner.calculate_trajectory(
+                self.Lxx, self.target_depth, sa, self.max_bend
+            )
+
+            if result.is_valid:
+                print(f"\n\n✅ НАЙДЕНО РЕШЕНИЕ при start_angle = {sa}%")
+                self.planner.display_trajectory_table(result)
+
+                approved = self._ask_user_approval(
+                    "start_angle",
+                    f"{self.start_angle}%",
+                    f"{sa}%",
+                    f"Возможно изменить угол входа с {self.start_angle}% на {sa}%?",
+                )
+                if approved:
+                    return result
+                # НЕТ → возвращаем None, main() перейдёт на УРОВЕНЬ 2
+                return None
+
+        # Не найдено ни одного валидного
+        print("\n⚠️  Изменение start_angle не помогло.\n")
+        return None
 
     # ── MODE 1: DRILLING_IN_PROGRESS ──────────────────────────
 
@@ -677,17 +814,55 @@ def main():
             mode = _select_mode()
             Lxx, depth, start_angle, max_bend = _read_common_params()
 
-            searcher = ModeSpecificSearcher(
+            searcher = CascadeSearcher(
                 planner, mode, Lxx, depth, start_angle, max_bend
             )
 
+            result = None
+
+            # ── РЕЖИМ: БУРЕНИЕ В ПРОЦЕССЕ ────────────────────
             if mode == DrillMode.DRILLING_IN_PROGRESS:
                 result = searcher.search_drilling_in_progress()
-            elif mode == DrillMode.PRE_DRILLING_ANCHORED:
-                result = searcher.search_pre_drilling_anchored()
-            else:
-                result = searcher.search_pre_drilling_no_anchor()
 
+            # ── РЕЖИМ: ПОДГОТОВКА С АНКЕРОВАНИЕМ ─────────────
+            elif mode == DrillMode.PRE_DRILLING_ANCHORED:
+                print(f"\n{'═'*80}")
+                print(f"🔍 ПОИСК В РЕЖИМЕ: {mode.value}")
+                print(f"{'═'*80}\n")
+
+                # УРОВЕНЬ 1: start_angle
+                print("📍 УРОВЕНЬ 1️⃣: Перебираю start_angle\n")
+                result = searcher.search_level_start_angle_anchored()
+
+                if result is None:
+                    print(f"\n{'━'*80}\n")
+                    # УРОВЕНЬ 2: max_bend (финальный)
+                    print("📍 УРОВЕНЬ 2️⃣: Перебираю max_bend\n")
+                    result = searcher.search_level_max_bend()
+
+            # ── РЕЖИМ: ПОДГОТОВКА БЕЗ АНКЕРОВАНИЯ ───────────
+            else:
+                print(f"\n{'═'*80}")
+                print(f"🔍 ПОИСК В РЕЖИМЕ: {mode.value}")
+                print(f"{'═'*80}\n")
+
+                # УРОВЕНЬ 1: Lxx
+                print("📍 УРОВЕНЬ 1️⃣: Перебираю Lxx\n")
+                result = searcher.search_level_lxx()
+
+                if result is None:
+                    print(f"\n{'━'*80}\n")
+                    # УРОВЕНЬ 2: start_angle
+                    print("📍 УРОВЕНЬ 2️⃣: Перебираю start_angle\n")
+                    result = searcher.search_level_start_angle()
+
+                    if result is None:
+                        print(f"\n{'━'*80}\n")
+                        # УРОВЕНЬ 3: max_bend (финальный)
+                        print("📍 УРОВЕНЬ 3️⃣: Перебираю max_bend\n")
+                        result = searcher.search_level_max_bend()
+
+            # ── Итог ─────────────────────────────────────────
             if result is not None:
                 print(f"\n  ✅ Финальные параметры:")
                 print(f"     Lxx         = {result.Lxx} м")
@@ -695,7 +870,7 @@ def main():
                 print(f"     max_bend    = {result.max_bend} %")
                 print(f"     Точность    = {result.accuracy} м")
             else:
-                print("\n  ❌ Подходящее решение не найдено.")
+                print("\n  ❌ К сожалению, решение невозможно. Требуется остановить бурение.")
 
         # ── 3. Глоссарий ─────────────────────────────────────
         elif choice == "3":
